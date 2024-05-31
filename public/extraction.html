@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reference Audio Feature Extraction</title>
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+  <input type="file" id="referenceAudioFile" accept="audio/*">
+  <div id="output"></div>
+
+  <script>
+    $(document).ready(function() {
+      $('#referenceAudioFile').change(function(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+          const audioContext = new AudioContext();
+
+          // Error handling for audio decoding
+          try {
+            const audioBuffer = await audioContext.decodeAudioData(e.target.result);
+            const features = await extractFeatures(audioBuffer);
+            const metadata = {
+              identifier: "species1",
+              location: "forest"
+            };
+            const audioData = {
+              metadata: metadata,
+              features: features
+            };
+
+            // Display extracted features
+            $('#output').text(JSON.stringify(audioData, null, 2));
+
+            // Save extracted features to extracted.json
+            saveFeaturesToJSON(audioData);
+          } catch (error) {
+            console.error('Error decoding audio file:', error);
+            $('#output').text('Error: Could not process audio file.');
+          }
+        };
+        reader.readAsArrayBuffer(file);
+      });
+
+      async function extractFeatures(audioBuffer) {
+        const sampleRate = audioBuffer.sampleRate;
+        const bufferLength = audioBuffer.length;
+
+        // Create an OfflineAudioContext
+        const offlineContext = new OfflineAudioContext(1, bufferLength, sampleRate);
+        const source = offlineContext.createBufferSource();
+        source.buffer = audioBuffer;
+        const analyser = offlineContext.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+        analyser.connect(offlineContext.destination);
+        source.start(0);
+
+        // Wait for the OfflineAudioContext to render
+        await offlineContext.startRendering();
+
+        // Calculate amplitude
+        let amplitude = 0;
+        const timeDomainData = new Float32Array(analyser.fftSize);
+        analyser.getFloatTimeDomainData(timeDomainData);
+        for (let i = 0; i < timeDomainData.length; i++) {
+          amplitude += Math.abs(timeDomainData[i]);
+        }
+        amplitude /= timeDomainData.length;
+
+        // Calculate spectral centroid
+        const frequencyData = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(frequencyData);
+        let spectralCentroid = calculateSpectralCentroid(frequencyData, sampleRate);
+
+        const features = {
+          amplitude: amplitude,
+          spectralCentroid: spectralCentroid
+        };
+
+        return features;
+      }
+
+      function calculateSpectralCentroid(frequencyData, sampleRate) {
+        let total = 0;
+        let weightedSum = 0;
+        for (let i = 0; i < frequencyData.length; i++) {
+          total += frequencyData[i];
+          weightedSum += frequencyData[i] * (i * sampleRate / frequencyData.length);
+        }
+        return total > 0 ? weightedSum / total : null; // Avoid division by zero
+      }
+
+      function saveFeaturesToJSON(data) {
+        // Convert the data to JSON and save to extracted.json
+        const jsonData = JSON.stringify(data, null, 2);
+        const blob = new Blob([jsonData], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'extracted.json';
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }
+    });
+  </script>
+</body>
+</html>
